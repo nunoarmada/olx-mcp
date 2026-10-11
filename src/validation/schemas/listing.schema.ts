@@ -23,96 +23,29 @@ export const SearchListingsArgsSchema = z
 
 export type SearchListingsArgs = z.infer<typeof SearchListingsArgsSchema>;
 
-export const GetListingDetailsArgsSchema = z.object({
-  domain: z.enum(['olx.pt', 'olx.pl', 'olx.bg', 'olx.ro', 'olx.ua']),
-  // Rejects path and selector metacharacters (quotes, slashes, whitespace, ?, #)
-  // that have no place in an OLX id. The id is also encoded before it reaches a
-  // URL and passed as data to DOM queries; this is the outer guard.
-  listingId: z
-    .string()
-    .min(1)
-    .regex(
-      /^[A-Za-z0-9._-]+$/,
-      'listingId may contain only letters, digits, dot, underscore, dash'
-    ),
-  includeImages: z.boolean().default(true),
-  includeSellerInfo: z.boolean().default(true),
-});
+export const GetListingDetailsArgsSchema = z
+  .object({
+    domain: z.enum(['olx.pt', 'olx.pl', 'olx.bg', 'olx.ro', 'olx.ua']),
+    // Rejects path and selector metacharacters (quotes, slashes, whitespace, ?, #)
+    // that have no place in an OLX id. The id is also encoded before it reaches a
+    // URL and passed as data to DOM queries; this is the outer guard.
+    listingId: z
+      .string()
+      .min(1)
+      .regex(
+        /^[A-Za-z0-9._-]+$/,
+        'listingId may contain only letters, digits, dot, underscore, dash'
+      )
+      .optional(),
+    // The listing's own page. Works for listings no search has returned in this
+    // session; the scraper accepts only URLs on the requested domain.
+    url: z.string().url().optional(),
+    includeImages: z.boolean().default(true),
+    includeSellerInfo: z.boolean().default(true),
+  })
+  .refine(data => data.listingId || data.url, {
+    message: 'Either listingId or url must be provided',
+    path: ['listingId'],
+  });
 
 export type GetListingDetailsArgs = z.infer<typeof GetListingDetailsArgsSchema>;
-
-export const GetCategoriesArgsSchema = z.object({
-  parentId: z.string().optional(),
-  includeSubcategories: z.boolean().default(true),
-  maxDepth: z.number().min(1).max(3).default(2),
-});
-
-export type GetCategoriesArgs = z.infer<typeof GetCategoriesArgsSchema>;
-
-export const GetLocationsArgsSchema = z.object({
-  searchTerm: z.string().optional(),
-  parentId: z.string().optional(),
-  type: z.enum(['district', 'municipality', 'parish']).optional(),
-  limit: z.number().min(1).max(100).default(20),
-});
-
-export type GetLocationsArgs = z.infer<typeof GetLocationsArgsSchema>;
-
-export const ListingSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  price: z.string().optional(),
-  location: z.string().optional(),
-  category: z.string().optional(),
-  imageUrl: z.string().url().optional(),
-  images: z.array(z.string().url()).optional(),
-  url: z.string().url(),
-  publishedAt: z.date().optional(),
-  description: z.string().optional(),
-  seller: z
-    .object({
-      name: z.string().optional(),
-      phone: z.string().optional(),
-      verified: z.boolean().optional(),
-      memberSince: z.date().optional(),
-    })
-    .optional(),
-});
-
-export const SearchResultSchema = z.object({
-  listings: z.array(ListingSchema),
-  totalCount: z.number().min(0),
-  currentPage: z.number().min(1),
-  totalPages: z.number().min(1),
-  hasNextPage: z.boolean(),
-});
-
-export const CategorySchema: z.ZodType<{
-  id: string;
-  name: string;
-  slug: string;
-  parentId?: string | undefined;
-  subcategories?:
-    | {
-        id: string;
-        name: string;
-        slug: string;
-        parentId?: string | undefined;
-        subcategories?: any;
-      }[]
-    | undefined;
-}> = z.object({
-  id: z.string(),
-  name: z.string(),
-  slug: z.string(),
-  parentId: z.string().optional(),
-  subcategories: z.array(z.lazy(() => CategorySchema)).optional(),
-});
-
-export const LocationSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  slug: z.string(),
-  parentId: z.string().optional(),
-  type: z.enum(['district', 'municipality', 'parish']),
-});

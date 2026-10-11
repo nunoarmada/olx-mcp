@@ -567,3 +567,98 @@ describe('OLXPTScraper', () => {
     });
   });
 });
+
+describe('OLXPTScraper review fixes', () => {
+  let scraper: OLXPTScraper;
+
+  beforeEach(() => {
+    resetPlaywrightMocks();
+    scraper = new OLXPTScraper(createPlaywrightMocks().browser);
+    setupOLXScrapingMocks();
+  });
+
+  afterEach(() => {
+    resetPlaywrightMocks();
+  });
+
+  const lastGotoUrl = () => {
+    const calls = verifyPlaywrightCalls().gotoCalledWith;
+    return calls[calls.length - 1]![0] as string;
+  };
+
+  it('treats a price bound of 0 as a real bound', async () => {
+    await scraper.scrape({ domain: 'olx.pt', query: 'mesa', minPrice: 0, maxPrice: 0 });
+
+    const url = new URL(lastGotoUrl());
+    expect(url.searchParams.get('search[filter_float_price:from]')).toBe('0');
+    expect(url.searchParams.get('search[filter_float_price:to]')).toBe('0');
+  });
+
+  it('navigates without waiting for network idle', async () => {
+    await scraper.scrape({ domain: 'olx.pt', query: 'mesa' });
+
+    const [, options] = verifyPlaywrightCalls().gotoCalledWith[0]!;
+    expect(options).toMatchObject({ waitUntil: 'domcontentloaded' });
+  });
+
+  it('fetches details for a pasted listing URL never seen by a search', async () => {
+    const id = scraper.rememberListingUrl(
+      'https://www.olx.pt/d/anuncio/mesa-IDQwErT9.html#gallery'
+    );
+    expect(id).toBe('QwErT9');
+
+    const result = await scraper.getListingDetails(id);
+
+    assertIsSuccess(result);
+    expect(result.data.url).toBe('https://www.olx.pt/d/anuncio/mesa-IDQwErT9.html');
+    expect(lastGotoUrl()).toBe('https://www.olx.pt/d/anuncio/mesa-IDQwErT9.html');
+  });
+
+  it('accepts the bare domain host', () => {
+    expect(scraper.rememberListingUrl('https://olx.pt/d/anuncio/mesa-IDabc.html')).toBe('abc');
+  });
+
+  it.each([
+    'https://www.olx.pl/d/oferta/x-IDabc.html',
+    'https://evil.example.com/x-IDabc.html',
+    'https://www.olx.pt.evil.com/x-IDabc.html',
+    'http://www.olx.pt/x-IDabc.html',
+    'not a url',
+  ])('rejects %s', url => {
+    expect(() => scraper.rememberListingUrl(url)).toThrow(/Listing URL|Invalid listing URL/);
+  });
+
+  it('closes the page and stops when the request is aborted mid-navigation', async () => {
+    const controller = new AbortController();
+    const { mockPage } = setupOLXScrapingMocks();
+    mockPage.goto.mockImplementation(() => {
+      // Playwright rejects the pending navigation once its page closes.
+      const pending = new Promise((_, reject) =>
+        mockPage.close.mockImplementation(() => {
+          reject(new Error('Target page, context or browser has been closed'));
+          return Promise.resolve();
+        })
+      );
+      controller.abort();
+      return pending;
+    });
+
+    const result = await scraper.scrape({ domain: 'olx.pt', query: 'mesa' }, controller.signal);
+
+    assertIsError(result);
+    expect(result.error.message).toBe('Operation cancelled');
+    // Not retried: one navigation only.
+    expect(mockPage.goto).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a lookup that found no listing', async () => {
+    const { mockPage } = setupOLXScrapingMocks();
+
+    const result = await scraper.getListingDetails('NOPE1' as ListingId);
+
+    assertIsError(result);
+    expect(result.error.message).toContain('not found');
+    // One fallback search, no retry rounds.
+    expect(mockPage.goto).toHaveBeenCalledTimes(1);
+  });
+});
