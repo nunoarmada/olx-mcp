@@ -74,7 +74,10 @@ export abstract class PlaywrightScraper<TQuery, TResult> implements IScraper<TQu
       throw error;
     } finally {
       signal?.removeEventListener('abort', onAbort);
-      await page.close();
+      // A failing close must not replace the operation's own error.
+      await page.close().catch((error: unknown) => {
+        console.error('Failed to close page:', error);
+      });
     }
   }
 

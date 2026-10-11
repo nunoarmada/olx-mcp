@@ -623,6 +623,8 @@ describe('OLXPTScraper review fixes', () => {
     'https://evil.example.com/x-IDabc.html',
     'https://www.olx.pt.evil.com/x-IDabc.html',
     'http://www.olx.pt/x-IDabc.html',
+    'https://www.olx.pt:444/x-IDabc.html',
+    'https://user:pw@www.olx.pt/x-IDabc.html',
     'not a url',
   ])('rejects %s', url => {
     expect(() => scraper.rememberListingUrl(url)).toThrow(/Listing URL|Invalid listing URL/);

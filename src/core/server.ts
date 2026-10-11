@@ -29,6 +29,7 @@ export class OLXMCPServer {
   private readonly registry = new ToolRegistry();
   private readonly server: Server;
   private browserLaunch?: Promise<Browser> | undefined;
+  private closed = false;
   private scraperFactory?: OlxScraperFactory | undefined;
 
   constructor(private readonly config: ServerConfig) {
@@ -55,6 +56,7 @@ export class OLXMCPServer {
    */
   async initialize(): Promise<void> {
     if (this.scraperFactory) return;
+    this.closed = false;
 
     this.scraperFactory = new OlxScraperFactory(() => this.getBrowser());
 
@@ -69,6 +71,8 @@ export class OLXMCPServer {
    * of failing every request until the server is restarted.
    */
   private getBrowser(): Promise<Browser> {
+    // A tool call racing shutdown must not launch a Chromium nobody will close.
+    if (this.closed) return Promise.reject(new Error('Server is shutting down'));
     if (!this.browserLaunch) {
       const launch = chromium
         .launch({ headless: this.config.headless ?? true, args: BROWSER_ARGS })
@@ -133,6 +137,7 @@ export class OLXMCPServer {
   }
 
   async cleanup(): Promise<void> {
+    this.closed = true;
     if (this.scraperFactory) {
       this.scraperFactory.clearCache();
       this.scraperFactory = undefined;

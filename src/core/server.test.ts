@@ -95,6 +95,7 @@ describe('OLXMCPServer', () => {
       await server.initialize();
       await server.cleanup();
       await expect(server.initialize()).resolves.toBeUndefined();
+      await expect(getBrowser(server)).resolves.toBe(mockBrowser);
     });
   });
 
@@ -199,6 +200,14 @@ describe('OLXMCPServer', () => {
       await server.initialize();
       await expect(server.cleanup()).resolves.toBeUndefined();
       expect(mockBrowser.close).not.toHaveBeenCalled();
+    });
+
+    it('refuses to launch a browser once shut down', async () => {
+      await server.initialize();
+      await server.cleanup();
+
+      await expect(getBrowser(server)).rejects.toThrow('Server is shutting down');
+      expect(launch).not.toHaveBeenCalled();
     });
 
     it('tolerates a launch that failed', async () => {
