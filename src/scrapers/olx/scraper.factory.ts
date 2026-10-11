@@ -1,13 +1,13 @@
-import { Browser } from 'playwright';
 import { OlxDomain } from '../../core/types.js';
 import { BaseOlxScraper } from './base-olx.scraper.js';
+import { BrowserSource } from '../base/scraper.interface.js';
 import { OLXPTScraper } from './olx-pt.scraper.js';
 import { OLXPLScraper } from './olx-pl.scraper.js';
 
 export class OlxScraperFactory {
   private readonly scrapers = new Map<OlxDomain, BaseOlxScraper>();
 
-  constructor(private readonly browser: Browser) {}
+  constructor(private readonly browser: BrowserSource) {}
 
   createScraper(domain: OlxDomain): BaseOlxScraper {
     // Check if we already have a scraper for this domain
@@ -64,7 +64,7 @@ export class OlxScraperFactory {
 
 // Domains with no behaviour of their own beyond their config entry.
 class GenericOlxScraper extends BaseOlxScraper {
-  constructor(domain: OlxDomain, browser: Browser) {
+  constructor(domain: OlxDomain, browser: BrowserSource) {
     super(domain, browser);
   }
 }

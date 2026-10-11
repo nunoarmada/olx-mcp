@@ -1,4 +1,4 @@
-import { Browser } from 'playwright';
+import { BrowserSource } from '../base/scraper.interface.js';
 import { BaseOlxScraper } from './base-olx.scraper.js';
 
 /**
@@ -6,7 +6,7 @@ import { BaseOlxScraper } from './base-olx.scraper.js';
  * and live in BaseOlxScraper; only the domain binding differs.
  */
 export class OLXPTScraper extends BaseOlxScraper {
-  constructor(browser: Browser) {
+  constructor(browser: BrowserSource) {
     super('olx.pt', browser);
   }
 }
