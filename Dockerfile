@@ -1,7 +1,7 @@
 # Container image for running olx-mcp as a remote MCP server (Streamable HTTP).
 # olx-mcp itself only speaks stdio; supergateway bridges it to HTTP and spawns
 # one olx-mcp process (and one headless Chromium) per MCP session.
-# Keep PLAYWRIGHT_VERSION in sync with the playwright version in package-lock.json.
+# CI passes PLAYWRIGHT_VERSION from package-lock.json; the default is for local builds.
 ARG PLAYWRIGHT_VERSION=1.55.0
 
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS build
