@@ -271,7 +271,10 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
     const bareHost = ownHost.replace(/^www\./, '');
     if (
       parsed.protocol !== 'https:' ||
-      (parsed.hostname !== ownHost && parsed.hostname !== bareHost)
+      (parsed.hostname !== ownHost && parsed.hostname !== bareHost) ||
+      parsed.port !== '' ||
+      parsed.username !== '' ||
+      parsed.password !== ''
     ) {
       throw new NonRetryableError(
         `Listing URL must be an https URL on ${this.domainConfig.domain}: ${listingUrl}`
