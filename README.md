@@ -60,7 +60,7 @@ Then use this config:
 ### 📦 Development: From Source
 
 ```bash
-git clone https://github.com/l-margiela/olx-mcp.git
+git clone https://github.com/nunoarmada/olx-mcp.git
 cd olx-mcp
 npm install
 npm run build
@@ -131,10 +131,15 @@ Can you get the details for listing "ABC123" from OLX Portugal?
 Show me details for listing "XYZ789" from OLX Poland including images?
 ```
 
+```
+What does this listing say? https://www.olx.pt/d/anuncio/...-IDabc123.html
+```
+
 **Parameters:**
 
 - `domain` (required): OLX domain ('olx.pt', 'olx.pl', 'olx.bg', 'olx.ro', 'olx.ua')
-- `listingId` (required): The ID of the listing
+- `listingId` (optional): The ID of a listing returned by a search in the same session
+- `url` (optional): The listing's own page URL on the same domain, e.g. a link you pasted. Works for listings no search has returned. One of `listingId` or `url` is required.
 - `includeImages` (default: true): Include the listing's gallery image URLs
 - `includeSellerInfo` (default: true): Include seller information
 
@@ -145,7 +150,8 @@ Show me details for listing "XYZ789" from OLX Poland including images?
 - `npm run build` - Build the TypeScript project
 - `npm run dev` - Run in development mode with hot reload
 - `npm start` - Run the built server
-- `npm test` - Run tests (when available)
+- `npm test` - Run the test suite
+- `npm run ci` - Lint, format check, type-check, tests with coverage, and build
 - `npm run clean` - Clean build artifacts
 
 ### Releasing

@@ -60,20 +60,34 @@ const ROMANIAN_FOLDING: DiacriticFolding = [
   [/ț/g, 't'],
 ];
 
+/**
+ * Table entries cover letters Unicode does not decompose (Polish ł). Every
+ * other accented Latin letter ("Setúbal", "Évora", "São") is folded
+ * generically by dropping its combining marks. The marks are only dropped
+ * after a Latin letter: Cyrillic letters such as "й" also decompose, and
+ * stripping their marks would turn them into different letters.
+ */
 const fold = (value: string, folding: DiacriticFolding): string =>
-  folding.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
+  folding
+    .reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value)
+    .normalize('NFD')
+    .replace(/(\p{Script=Latin})\p{M}+/gu, '$1')
+    .normalize('NFC');
 
 /**
  * Folding runs before punctuation is dropped, otherwise the strip would delete
  * the accented characters outright and the folding would never apply.
  *
- * Letters outside the ASCII range that no folding table covers — Cyrillic on
+ * Letters outside the ASCII range that folding does not cover — Cyrillic on
  * olx.ua and olx.bg — are percent-encoded rather than removed. Deleting them
  * produced an empty "q-" slug, and OLX answers that with its unfiltered
  * all-ads page, so every Cyrillic search silently returned arbitrary listings.
+ *
+ * Locations go through the same function: a raw "?" or "#" in a location
+ * would otherwise end the path and turn the rest into a query or fragment.
  */
-const slugifyQuery = (query: string, folding: DiacriticFolding): string => {
-  const slug = fold(query.toLowerCase(), folding)
+const slugify = (value: string, folding: DiacriticFolding): string => {
+  const slug = fold(value.toLowerCase(), folding)
     // Keep letters and digits of any script; drop punctuation only.
     .replace(/[^\p{L}\p{N}\s-]/gu, '')
     .replace(/\s+/g, '-')
@@ -83,9 +97,6 @@ const slugifyQuery = (query: string, folding: DiacriticFolding): string => {
   return /^[a-z0-9-]*$/.test(slug) ? slug : encodeURIComponent(slug);
 };
 
-const slugifyLocation = (location: string, folding: DiacriticFolding): string =>
-  fold(location.toLowerCase().replace(/\s+/g, '-'), folding);
-
 /**
  * OLX addresses searches either as /<location>/q-<query>/ or, with no location,
  * as <listingPath>q-<query>/ — where listingPath is the domain's "all ads" path.
@@ -93,11 +104,12 @@ const slugifyLocation = (location: string, folding: DiacriticFolding): string =>
 const buildSearchPath =
   (listingPath: string, folding: DiacriticFolding = []) =>
   (location?: string, query?: string): string => {
-    if (location) {
-      const base = `/${slugifyLocation(location, folding)}`;
-      return query ? `${base}/q-${slugifyQuery(query, folding)}/` : `${base}/`;
-    }
-    return query ? `${listingPath}q-${slugifyQuery(query, folding)}/` : listingPath;
+    const locationSlug = location ? slugify(location, folding) : '';
+    const querySlug = query ? slugify(query, folding) : '';
+    // A location or query made only of punctuation slugs to nothing; it is
+    // dropped rather than producing "//" or a bare "q-" path segment.
+    const base = locationSlug ? `/${locationSlug}/` : listingPath;
+    return querySlug ? `${base}q-${querySlug}/` : base;
   };
 
 /** Identical on every domain observed so far. */

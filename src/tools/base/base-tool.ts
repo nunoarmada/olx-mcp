@@ -28,30 +28,4 @@ export abstract class BaseTool<TArgs, TResult> implements MCPTool<TArgs, TResult
       return createError<TResult>(error instanceof Error ? error : new Error(String(error)));
     }
   }
-
-  protected validateAndTransform<T>(schema: z.ZodSchema<T>, data: unknown): Result<T> {
-    try {
-      const validated = schema.parse(data);
-      return createResult(validated);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        const formattedErrors = error.errors
-          .map(err => `${err.path.join('.')}: ${err.message}`)
-          .join(', ');
-        return createError<T>(`Validation error: ${formattedErrors}`);
-      }
-      return createError<T>(error instanceof Error ? error : new Error(String(error)));
-    }
-  }
-
-  protected async timeout<T>(
-    promise: Promise<T>,
-    ms: number,
-    timeoutMessage = 'Operation timed out'
-  ): Promise<T> {
-    return Promise.race([
-      promise,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(timeoutMessage)), ms)),
-    ]);
-  }
 }

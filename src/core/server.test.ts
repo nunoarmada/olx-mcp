@@ -1,13 +1,32 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// Mock modules before importing
-const mockServer = {
-  setRequestHandler: vi.fn(),
-  connect: vi.fn().mockResolvedValue(undefined),
-};
+type Handler = (request: any, extra?: any) => Promise<any>;
+
+// Mock modules before importing. vi.hoisted keeps these reachable from the
+// hoisted vi.mock factories.
+const { handlers, mockServer, mockBrowser, launch } = vi.hoisted(() => {
+  const handlers = new Map<unknown, Handler>();
+  const mockServer = {
+    setRequestHandler: vi.fn((schema: unknown, handler: Handler) => {
+      handlers.set(schema, handler);
+    }),
+    connect: vi.fn().mockResolvedValue(undefined),
+  };
+  const mockBrowser = {
+    newPage: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
+    on: vi.fn(),
+  };
+  const launch = vi.fn();
+  return { handlers, mockServer, mockBrowser, launch };
+});
 
 vi.mock('@modelcontextprotocol/sdk/server/index.js', () => ({
-  Server: vi.fn().mockImplementation(() => mockServer),
+  // A regular function: the server calls this with `new`, and an arrow
+  // function cannot be a constructor.
+  Server: vi.fn(function () {
+    return mockServer;
+  }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
@@ -15,236 +34,187 @@ vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
   CallToolRequestSchema: Symbol('CallToolRequestSchema'),
 }));
 
-vi.mock('zod-to-json-schema', () => ({
-  zodToJsonSchema: vi.fn().mockReturnValue({ type: 'object' }),
-}));
+vi.mock('playwright', () => ({ chromium: { launch } }));
 
-vi.mock('playwright', () => ({
-  chromium: {
-    launch: vi.fn().mockResolvedValue({
-      newPage: vi.fn().mockResolvedValue({
-        goto: vi.fn(),
-        setDefaultTimeout: vi.fn(),
-        close: vi.fn(),
-      }),
-      close: vi.fn(),
-    }),
-  },
-}));
-
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { OLXMCPServer, type ServerConfig } from './server.js';
+
+const callTool = (name: string, args: unknown, signal = new AbortController().signal) =>
+  handlers.get(CallToolRequestSchema)!({ params: { name, arguments: args } }, { signal });
+
+const getBrowser = (server: OLXMCPServer) =>
+  (server as unknown as { getBrowser: () => Promise<unknown> }).getBrowser();
 
 describe('OLXMCPServer', () => {
   let server: OLXMCPServer;
-  let config: ServerConfig;
+  const config: ServerConfig = { name: 'test-olx-mcp-server', version: '1.0.0-test' };
 
   beforeEach(() => {
     vi.clearAllMocks();
-
-    config = {
-      name: 'test-olx-mcp-server',
-      version: '1.0.0-test',
-      headless: true,
-    };
-
+    handlers.clear();
+    launch.mockResolvedValue(mockBrowser);
     server = new OLXMCPServer(config);
   });
 
-  describe('Server initialization', () => {
-    it('should create server with correct configuration', () => {
-      expect(server).toBeInstanceOf(OLXMCPServer);
-      expect(server.getServer()).toBeDefined();
+  describe('construction', () => {
+    it('creates the SDK server with the configured name and version', () => {
+      expect(Server).toHaveBeenCalledWith(
+        { name: 'test-olx-mcp-server', version: '1.0.0-test' },
+        { capabilities: { tools: {} } }
+      );
+      expect(server.getServer()).toBe(mockServer);
     });
 
-    it('should initialize browser and register tools', async () => {
-      const { chromium } = await import('playwright');
-
-      await server.initialize();
-
-      expect(chromium.launch).toHaveBeenCalledWith({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--disable-gpu',
-        ],
-      });
-    });
-
-    it('should use headless option from config', async () => {
-      const { chromium } = await import('playwright');
-      const headlessConfig = { ...config, headless: false };
-      const headlessServer = new OLXMCPServer(headlessConfig);
-
-      await headlessServer.initialize();
-
-      expect(chromium.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: false }));
-    });
-
-    it('should default to headless when not specified', async () => {
-      const { chromium } = await import('playwright');
-      const defaultConfig = { name: 'test', version: '1.0.0' };
-      const defaultServer = new OLXMCPServer(defaultConfig);
-
-      await defaultServer.initialize();
-
-      expect(chromium.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: true }));
+    it('connects the given transport', async () => {
+      const transport = { start: vi.fn(), send: vi.fn(), close: vi.fn() };
+      await server.connect(transport);
+      expect(mockServer.connect).toHaveBeenCalledWith(transport);
     });
   });
 
-  describe('Connection management', () => {
+  describe('initialize', () => {
+    it('registers both tools without launching the browser', async () => {
+      await server.initialize();
+
+      const { tools } = await handlers.get(ListToolsRequestSchema)!({});
+      expect(tools.map((tool: { name: string }) => tool.name)).toEqual([
+        'searchListings',
+        'getListingDetails',
+      ]);
+      expect(tools[0].inputSchema).toMatchObject({ type: 'object' });
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it('is idempotent', async () => {
+      await server.initialize();
+      await expect(server.initialize()).resolves.toBeUndefined();
+    });
+
+    it('can initialize again after cleanup', async () => {
+      await server.initialize();
+      await server.cleanup();
+      await expect(server.initialize()).resolves.toBeUndefined();
+      await expect(getBrowser(server)).resolves.toBe(mockBrowser);
+    });
+  });
+
+  describe('tool calls', () => {
     beforeEach(async () => {
       await server.initialize();
     });
 
-    it('should connect to transport', async () => {
-      const mockTransport = { send: vi.fn(), onMessage: vi.fn() };
+    it('rejects unknown tools as a protocol error', async () => {
+      await expect(callTool('nope', {})).rejects.toThrow('Tool not found: nope');
+    });
 
-      await server.connect(mockTransport);
+    it('returns tool failures as isError results the model can read', async () => {
+      const result = await callTool('searchListings', { domain: 'olx.pt' });
 
-      const serverInstance = server.getServer();
-      expect(serverInstance.connect).toHaveBeenCalledWith(mockTransport);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(
+        'At least one of query, category, or location must be provided'
+      );
+    });
+
+    it('passes the request abort signal to the tool', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await callTool(
+        'searchListings',
+        { domain: 'olx.pt', query: 'x' },
+        controller.signal
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe('Operation cancelled');
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it('reports a browser that cannot launch as a tool error', async () => {
+      launch.mockRejectedValue(new Error("Executable doesn't exist"));
+
+      const result = await callTool('searchListings', { domain: 'olx.pt', query: 'x' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Executable doesn't exist");
     });
   });
 
-  describe('Resource cleanup', () => {
-    it('should clean up browser resources', async () => {
-      const { chromium } = await import('playwright');
-      await server.initialize();
+  describe('browser lifecycle', () => {
+    it('launches headless with the sandbox-free args by default', async () => {
+      await getBrowser(server);
 
-      await server.cleanup();
-
-      // Get the mock browser that was created
-      const mockBrowser = vi.mocked(chromium.launch).mock.results[0]?.value;
-      expect(mockBrowser?.close).toHaveBeenCalled();
-    });
-
-    it('should handle cleanup when browser is not initialized', async () => {
-      // Should not throw error
-      await expect(server.cleanup()).resolves.toBeUndefined();
-    });
-
-    it('should handle cleanup errors gracefully', async () => {
-      const { chromium } = await import('playwright');
-      await server.initialize();
-
-      // Mock browser close to throw error
-      const mockBrowser = vi.mocked(chromium.launch).mock.results[0]?.value;
-      if (mockBrowser?.close) {
-        mockBrowser.close.mockRejectedValueOnce(new Error('Close failed'));
-      }
-
-      // Should not propagate error
-      await expect(server.cleanup()).resolves.toBeUndefined();
-    });
-  });
-
-  describe('Error handling', () => {
-    it('should handle browser launch failures', async () => {
-      const { chromium } = await import('playwright');
-      vi.mocked(chromium.launch).mockRejectedValueOnce(new Error('Browser launch failed'));
-
-      await expect(server.initialize()).rejects.toThrow('Browser launch failed');
-    });
-
-    it('should handle scraper creation failures', async () => {
-      const { chromium } = await import('playwright');
-      // Mock browser to return null
-      vi.mocked(chromium.launch).mockResolvedValueOnce(null as any);
-
-      await expect(server.initialize()).rejects.toThrow();
-    });
-  });
-
-  describe('Server configuration', () => {
-    it('should use provided server name and version', () => {
-      const customConfig: ServerConfig = {
-        name: 'custom-olx-server',
-        version: '2.1.0',
-        headless: false,
-      };
-
-      const customServer = new OLXMCPServer(customConfig);
-
-      expect(customServer).toBeInstanceOf(OLXMCPServer);
-    });
-
-    it('should handle minimal configuration', () => {
-      const minimalConfig: ServerConfig = {
-        name: 'minimal-server',
-        version: '1.0.0',
-      };
-
-      const minimalServer = new OLXMCPServer(minimalConfig);
-      expect(minimalServer).toBeInstanceOf(OLXMCPServer);
-    });
-  });
-
-  describe('Browser configuration', () => {
-    it('should configure browser with security options', async () => {
-      const { chromium } = await import('playwright');
-
-      await server.initialize();
-
-      expect(chromium.launch).toHaveBeenCalledWith({
+      expect(launch).toHaveBeenCalledWith({
         headless: true,
-        args: expect.arrayContaining([
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--disable-gpu',
-        ]),
+        args: expect.arrayContaining(['--no-sandbox', '--disable-dev-shm-usage']),
       });
     });
 
-    it('should pass through headless configuration', async () => {
-      const { chromium } = await import('playwright');
-      const configs = [
-        { name: 'test', version: '1.0.0', headless: true },
-        { name: 'test', version: '1.0.0', headless: false },
-        { name: 'test', version: '1.0.0' }, // undefined should default to true
-      ];
+    it('passes through headless: false', async () => {
+      await getBrowser(new OLXMCPServer({ ...config, headless: false }));
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({ headless: false }));
+    });
 
-      for (const testConfig of configs) {
-        vi.clearAllMocks();
+    it('launches once and shares the browser across calls', async () => {
+      const [a, b] = await Promise.all([getBrowser(server), getBrowser(server)]);
 
-        const testServer = new OLXMCPServer(testConfig);
-        await testServer.initialize();
+      expect(a).toBe(mockBrowser);
+      expect(b).toBe(mockBrowser);
+      expect(launch).toHaveBeenCalledTimes(1);
+    });
 
-        const expectedHeadless = testConfig.headless ?? true;
-        expect(chromium.launch).toHaveBeenCalledWith(
-          expect.objectContaining({ headless: expectedHeadless })
-        );
-      }
+    it('relaunches after the browser disconnects', async () => {
+      await getBrowser(server);
+      const onDisconnected = mockBrowser.on.mock.calls.find(
+        ([event]) => event === 'disconnected'
+      )![1];
+
+      onDisconnected();
+      await getBrowser(server);
+
+      expect(launch).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries a launch that failed', async () => {
+      launch.mockRejectedValueOnce(new Error('boom'));
+
+      await expect(getBrowser(server)).rejects.toThrow('boom');
+      await expect(getBrowser(server)).resolves.toBe(mockBrowser);
+      expect(launch).toHaveBeenCalledTimes(2);
     });
   });
 
-  describe('Performance considerations', () => {
-    it('should initialize efficiently', async () => {
-      const startTime = Date.now();
+  describe('cleanup', () => {
+    it('closes a launched browser', async () => {
       await server.initialize();
-      const endTime = Date.now();
+      await getBrowser(server);
 
-      // Should complete quickly (within reasonable time for tests)
-      expect(endTime - startTime).toBeLessThan(1000);
+      await server.cleanup();
+
+      expect(mockBrowser.close).toHaveBeenCalledTimes(1);
     });
 
-    it('should handle rapid cleanup and re-initialization', async () => {
-      const { chromium } = await import('playwright');
+    it('does nothing when the browser never launched', async () => {
+      await server.initialize();
+      await expect(server.cleanup()).resolves.toBeUndefined();
+      expect(mockBrowser.close).not.toHaveBeenCalled();
+    });
 
-      for (let i = 0; i < 3; i++) {
-        await server.initialize();
-        await server.cleanup();
-      }
+    it('refuses to launch a browser once shut down', async () => {
+      await server.initialize();
+      await server.cleanup();
 
-      expect(chromium.launch).toHaveBeenCalledTimes(3);
+      await expect(getBrowser(server)).rejects.toThrow('Server is shutting down');
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it('tolerates a launch that failed', async () => {
+      launch.mockRejectedValue(new Error('boom'));
+      await getBrowser(server).catch(() => {});
+
+      await expect(server.cleanup()).resolves.toBeUndefined();
     });
   });
 });
