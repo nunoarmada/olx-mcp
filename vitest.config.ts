@@ -30,13 +30,14 @@ export default defineConfig({
         'src/index.ts', // Entry point file
         'coverage/**'
       ],
+      // Flat keys: Vitest ignores a nested `global` block, which is how the
+      // previous 80% target went unenforced. These are floors just under the
+      // measured coverage, to be raised as coverage improves.
       thresholds: {
-        global: {
-          branches: 80,
-          functions: 80,
-          lines: 80,
-          statements: 80
-        }
+        branches: 85,
+        functions: 90,
+        lines: 65,
+        statements: 65
       }
     },
     setupFiles: ['./tests/setup.ts'],

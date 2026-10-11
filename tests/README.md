@@ -52,9 +52,6 @@ npm run test:coverage
 # Run tests in watch mode
 npm run test:watch
 
-# Run only working tests (excludes complex server/scraper tests)
-npm run test:working
-
 # Run unit tests only
 npm run test:unit
 
@@ -69,7 +66,7 @@ Coverage reports are generated using V8 coverage provider and include:
 - Function coverage
 - Line coverage
 
-Coverage thresholds are set to 80% for all metrics.
+Coverage thresholds are enforced in `vitest.config.ts` as floors just under the current coverage; raise them as coverage improves.
 
 ## Test Configuration
 
