@@ -236,12 +236,49 @@ describe('GetListingDetailsTool', () => {
       expect(result.error.message).toContain('listingId');
     });
 
-    it('should reject missing listing ID', async () => {
-      // @ts-expect-error Testing invalid input
-      const result = await detailsTool.execute({ domain: 'olx.pt' });
+    it('should reject a call with neither listing ID nor url', async () => {
+      const result = await detailsTool.execute({ domain: 'olx.pt' } as any);
 
       assertIsError(result);
       expect(result.error.message).toContain('Validation error');
+      expect(result.error.message).toContain('Either listingId or url must be provided');
+    });
+
+    it('should resolve a listing url through the scraper', async () => {
+      (mockScraper as any).rememberListingUrl = vi.fn().mockReturnValue('QwErT9');
+      (mockScraper.getListingDetails as any).mockResolvedValue(
+        createSuccessResult(createMockListing({ id: 'QwErT9' as ListingId }))
+      );
+
+      const result = await detailsTool.execute({
+        domain: 'olx.pt',
+        url: 'https://www.olx.pt/d/anuncio/mesa-IDQwErT9.html',
+      } as any);
+
+      assertIsSuccess(result);
+      expect((mockScraper as any).rememberListingUrl).toHaveBeenCalledWith(
+        'https://www.olx.pt/d/anuncio/mesa-IDQwErT9.html'
+      );
+      expect(mockScraper.getListingDetails).toHaveBeenCalledWith(
+        'QwErT9',
+        undefined,
+        expect.any(Object)
+      );
+    });
+
+    it('should report a url the scraper rejects as an error', async () => {
+      (mockScraper as any).rememberListingUrl = vi.fn(() => {
+        throw new Error('Listing URL must be an https URL on olx.pt: https://x.com/a');
+      });
+
+      const result = await detailsTool.execute({
+        domain: 'olx.pt',
+        url: 'https://x.com/a',
+      } as any);
+
+      assertIsError(result);
+      expect(result.error.message).toContain('Listing URL must be');
+      expect(mockScraper.getListingDetails).not.toHaveBeenCalled();
     });
 
     it('should reject non-string listing ID', async () => {

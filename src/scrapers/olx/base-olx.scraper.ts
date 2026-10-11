@@ -1,5 +1,10 @@
-import { Browser, Page } from 'playwright';
-import { NonRetryableError, PlaywrightScraper } from '../base/scraper.interface.js';
+import { Page } from 'playwright';
+import {
+  BrowserSource,
+  NonRetryableError,
+  PlaywrightScraper,
+  throwIfAborted,
+} from '../base/scraper.interface.js';
 import {
   SearchFilters,
   SearchResult,
@@ -26,14 +31,16 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
   protected readonly domainConfig: DomainConfig;
   private readonly urlCache = new Map<string, string>(); // Maps listing ID to full URL
 
-  constructor(domain: OlxDomain, browser: Browser) {
+  constructor(domain: OlxDomain, browser: BrowserSource) {
     const domainConfig = getDomainConfig(domain);
 
     super(
       {
         baseUrl: domainConfig.baseUrl,
-        timeout: 30000,
-        retries: 3,
+        // Bounded so the worst case (every attempt timing out) stays near the
+        // ~60 s MCP clients typically wait for a tool call.
+        timeout: 20000,
+        retries: 2,
         userAgent:
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         headless: true,
@@ -50,7 +57,11 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
 
   async scrape(filters: SearchFilters, signal?: AbortSignal): Promise<Result<SearchResult>> {
     try {
-      const result = await this.retryOperation(() => this.performSearch(filters, signal));
+      const result = await this.retryOperation(
+        () => this.performSearch(filters, signal),
+        undefined,
+        signal
+      );
       return createResult(result);
     } catch (error) {
       return createError(error instanceof Error ? error : new Error(String(error)));
@@ -61,12 +72,11 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
     return await this.withPage(async page => {
       const searchUrl = this.buildSearchUrl(filters);
 
-      await page.goto(searchUrl, { waitUntil: 'networkidle' });
+      // OLX renders results server-side; 'networkidle' only added the time its
+      // ad and tracking scripts take to go quiet, often many seconds.
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
       await this.waitForSearchResults(page);
-
-      if (signal?.aborted) {
-        throw new Error('Operation cancelled');
-      }
+      throwIfAborted(signal);
 
       const currentPage = filters.page || 1;
       const { listings, cardCount } = await this.extractListings(page, filters.limit);
@@ -105,15 +115,15 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
       url.searchParams.set(this.domainConfig.urlPatterns.categoryParam, filters.category);
     }
 
-    // Handle price filters
-    if (filters.minPrice) {
+    // Handle price filters. Compared against undefined so 0 is a real bound.
+    if (filters.minPrice !== undefined) {
       url.searchParams.set(
         this.domainConfig.urlPatterns.priceParams.min,
         filters.minPrice.toString()
       );
     }
 
-    if (filters.maxPrice) {
+    if (filters.maxPrice !== undefined) {
       url.searchParams.set(
         this.domainConfig.urlPatterns.priceParams.max,
         filters.maxPrice.toString()
@@ -243,6 +253,38 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
     return { listings, cardCount: cards.length };
   }
 
+  /**
+   * Accepts a listing's own URL, so details can be fetched for a listing no
+   * search in this process has seen (after a restart, or a link the user
+   * pasted). Only this domain's hosts are accepted: the URL is opened in the
+   * browser, and it must not become a way to load arbitrary pages.
+   */
+  rememberListingUrl(listingUrl: string): ListingId {
+    let parsed: URL;
+    try {
+      parsed = new URL(listingUrl);
+    } catch {
+      throw new NonRetryableError(`Invalid listing URL: ${listingUrl}`);
+    }
+
+    const ownHost = new URL(this.domainConfig.baseUrl).hostname;
+    const bareHost = ownHost.replace(/^www\./, '');
+    if (
+      parsed.protocol !== 'https:' ||
+      (parsed.hostname !== ownHost && parsed.hostname !== bareHost)
+    ) {
+      throw new NonRetryableError(
+        `Listing URL must be an https URL on ${this.domainConfig.domain}: ${listingUrl}`
+      );
+    }
+
+    parsed.hash = '';
+    const url = parsed.toString();
+    const id = this.extractListingId(url);
+    this.rememberUrl(id, url);
+    return id;
+  }
+
   /** Bounded so a long-lived server cannot accumulate every URL it has seen. */
   private rememberUrl(id: ListingId, url: string): void {
     if (this.urlCache.size >= BaseOlxScraper.URL_CACHE_LIMIT) {
@@ -301,8 +343,10 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
     try {
       // options is captured by this closure, so every retry attempt re-applies
       // the same skip/include decisions.
-      const result = await this.retryOperation(() =>
-        this.performGetListingDetails(listingId, signal, options)
+      const result = await this.retryOperation(
+        () => this.performGetListingDetails(listingId, signal, options),
+        undefined,
+        signal
       );
       return createResult(result);
     } catch (error) {
@@ -328,17 +372,15 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
       }
 
       if (!finalUrl) {
-        throw new Error(
-          `Listing with ID ${listingId} not found. Try searching first to cache the URL.`
+        // Retrying the same lookup finds nothing new.
+        throw new NonRetryableError(
+          `Listing with ID ${listingId} not found. Pass the listing's url, or search first to cache it.`
         );
       }
 
       // Navigate to the listing page
-      await page.goto(finalUrl, { waitUntil: 'networkidle' });
-
-      if (signal?.aborted) {
-        throw new Error('Operation cancelled');
-      }
+      await page.goto(finalUrl, { waitUntil: 'domcontentloaded' });
+      throwIfAborted(signal);
 
       const detail = this.domainConfig.selectors.detail;
       // Absent flags mean "include", matching the MCP tool schema defaults;
@@ -395,7 +437,7 @@ export abstract class BaseOlxScraper extends PlaywrightScraper<SearchFilters, Se
 
     try {
       await page.goto(`${this.domainConfig.baseUrl}${listingPath}q-${safeId}/`, {
-        waitUntil: 'networkidle',
+        waitUntil: 'domcontentloaded',
         timeout: 15000,
       });
 

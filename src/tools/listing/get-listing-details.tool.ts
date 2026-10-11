@@ -9,7 +9,7 @@ import { OlxScraperFactory } from '../../scrapers/olx/scraper.factory.js';
 export class GetListingDetailsTool extends BaseTool<GetListingDetailsArgs, Listing> {
   readonly name = 'getListingDetails';
   readonly description =
-    'Get detailed information about a specific OLX listing from any supported domain (olx.pt, olx.pl, olx.bg, olx.ro, olx.ua) including description, seller info, and images';
+    'Get detailed information about a specific OLX listing from any supported domain (olx.pt, olx.pl, olx.bg, olx.ro, olx.ua) including description, seller info, and images. Identify the listing by its url, or by a listingId returned from searchListings';
   readonly inputSchema = GetListingDetailsArgsSchema;
 
   constructor(private readonly scraperFactory: OlxScraperFactory) {
@@ -18,7 +18,10 @@ export class GetListingDetailsTool extends BaseTool<GetListingDetailsArgs, Listi
 
   protected async executeImpl(args: GetListingDetailsArgs, signal?: AbortSignal): Promise<Listing> {
     const scraper = this.scraperFactory.getScraper(args.domain);
-    const listingId = args.listingId as ListingId;
+    // The url wins when both are given: it is what actually gets opened.
+    const listingId = args.url
+      ? scraper.rememberListingUrl(args.url)
+      : (args.listingId as ListingId);
 
     // The scraper skips the corresponding DOM work entirely for disabled
     // parts, so nothing needs stripping here.

@@ -3,7 +3,7 @@ import {
   SearchListingsArgsSchema,
   SearchListingsArgs,
 } from '../../validation/schemas/listing.schema.js';
-import { SearchResult, SearchFilters } from '../../core/types.js';
+import { SearchResult, SearchFilters, CategoryId, LocationId } from '../../core/types.js';
 import { OlxScraperFactory } from '../../scrapers/olx/scraper.factory.js';
 
 export class SearchListingsTool extends BaseTool<SearchListingsArgs, SearchResult> {
@@ -25,8 +25,9 @@ export class SearchListingsTool extends BaseTool<SearchListingsArgs, SearchResul
     const filters: SearchFilters = {
       domain: args.domain,
       query: args.query,
-      category: args.category as any, // Will be properly typed when we have CategoryId conversion
-      location: args.location as any, // Will be properly typed when we have LocationId conversion
+      // Free text from the client, branded here at the boundary.
+      category: args.category as CategoryId | undefined,
+      location: args.location as LocationId | undefined,
       minPrice: args.minPrice,
       maxPrice: args.maxPrice,
       page: args.page,
