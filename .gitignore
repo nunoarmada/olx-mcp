@@ -87,3 +87,6 @@ CLAUDE.md
 .claude.md
 **/claude.md
 **/CLAUDE.md
+
+# Local Claude Code settings
+.claude/settings.local.json

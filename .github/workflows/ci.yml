@@ -9,10 +9,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     strategy:
       matrix:
-        node-version: [18.x, 20.x]
+        node-version: [20.x, 22.x]
 
     steps:
     - name: Checkout code
@@ -24,28 +24,31 @@ jobs:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
 
+    # The tests mock Playwright, so no browser download is needed here.
     - name: Install dependencies
       run: npm ci
-
-    - name: Install Playwright browsers
-      run: npx playwright install --with-deps
+      env:
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
     - name: Run linting
       run: npm run lint
 
+    - name: Check formatting
+      run: npm run format:check
+
     - name: Run type checking
       run: npm run type-check
 
-    - name: Run stable tests
-      run: npm run test:unit && npm run test:tools
+    - name: Run tests with coverage
+      run: npm run test:coverage
 
     - name: Run build
       run: npm run build
 
     - name: Upload test coverage
-      uses: codecov/codecov-action@v3
-      if: matrix.node-version == '20.x'
+      uses: codecov/codecov-action@v4
+      if: matrix.node-version == '22.x'
       with:
-        file: ./coverage/lcov.info
+        files: ./coverage/lcov.info
         flags: unittests
         fail_ci_if_error: false
