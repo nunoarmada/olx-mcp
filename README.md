@@ -79,6 +79,18 @@ Use this config for development:
 }
 ```
 
+### 🐳 Remote server (container)
+
+The `Dockerfile` wraps the stdio server with [supergateway](https://github.com/supercorp-ai/supergateway)
+and serves MCP over Streamable HTTP on port 8000 (`/mcp`, health check at `/healthz`).
+Images are published to `ghcr.io/nunoarmada/olx-mcp` on every push to `main`.
+
+```bash
+docker run --rm -p 8000:8000 ghcr.io/nunoarmada/olx-mcp:latest
+```
+
+The server has no authentication of its own; put it behind a proxy that enforces it.
+
 ## Usage
 
 Once configured, you can use the following tools in your MCP client:
