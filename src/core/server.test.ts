@@ -60,10 +60,27 @@ describe('OLXMCPServer', () => {
   describe('construction', () => {
     it('creates the SDK server with the configured name and version', () => {
       expect(Server).toHaveBeenCalledWith(
-        { name: 'test-olx-mcp-server', version: '1.0.0-test' },
+        expect.objectContaining({
+          name: 'test-olx-mcp-server',
+          title: 'OLX',
+          version: '1.0.0-test',
+        }),
         { capabilities: { tools: {} } }
       );
       expect(server.getServer()).toBe(mockServer);
+    });
+
+    it('advertises a PNG and an SVG icon as data URIs', () => {
+      const [info] = vi.mocked(Server).mock.calls[0]!;
+      const icons = (info as { icons: { src: string; mimeType: string }[] }).icons;
+
+      expect(icons.map(icon => icon.mimeType)).toEqual(['image/png', 'image/svg+xml']);
+      const png = Buffer.from(icons[0]!.src.replace('data:image/png;base64,', ''), 'base64');
+      // PNG signature: the inlined bytes are a real image, not a truncated string.
+      expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      expect(
+        Buffer.from(icons[1]!.src.replace('data:image/svg+xml;base64,', ''), 'base64').toString()
+      ).toMatch(/^<svg /);
     });
 
     it('connects the given transport', async () => {
