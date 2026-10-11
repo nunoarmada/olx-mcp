@@ -5,6 +5,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import { chromium, Browser } from 'playwright';
 
 import { ToolRegistry } from './tool-registry.js';
+import { SERVER_ICONS } from './icons.js';
 import { SearchListingsTool } from '../tools/search/search-listings.tool.js';
 import { GetListingDetailsTool } from '../tools/listing/get-listing-details.tool.js';
 import { OlxScraperFactory } from '../scrapers/olx/scraper.factory.js';
@@ -36,7 +37,11 @@ export class OLXMCPServer {
     this.server = new Server(
       {
         name: config.name,
+        title: 'OLX',
         version: config.version,
+        description: 'Search and read listings on OLX (PT, PL, BG, RO, UA)',
+        websiteUrl: 'https://github.com/nunoarmada/olx-mcp',
+        icons: SERVER_ICONS,
       },
       {
         capabilities: {
