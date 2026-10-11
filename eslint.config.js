@@ -24,6 +24,7 @@ export default [
         URL: 'readonly',
         URLSearchParams: 'readonly',
         AbortSignal: 'readonly',
+        AbortController: 'readonly',
         // DOM globals: the scraper's extractors are typed against the document
         // they are serialised into and evaluated in.
         Element: 'readonly',
@@ -65,6 +66,7 @@ export default [
         URL: 'readonly',
         URLSearchParams: 'readonly',
         AbortSignal: 'readonly',
+        AbortController: 'readonly',
         // Test globals
         describe: 'readonly',
         it: 'readonly',
